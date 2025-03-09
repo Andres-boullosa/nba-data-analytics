@@ -8,6 +8,7 @@ import numpy as np
 import json
 import difflib
 
+DATABASE_NAME = "NBA_DATA.db"
 
 def generate_database(seasons: list[int], seasonType: str):
     # Generate a database
@@ -131,9 +132,20 @@ def generate_database(seasons: list[int], seasonType: str):
             gameDF['NUM_REST_DAYS'] = (gameDF['GAME_DATE'] - gameDF['LAST_GAME_DATE'])/np.timedelta64(1,'D') 
             return gameDF.drop('LAST_GAME_DATE',axis=1)
         
+        def getmetrics(gameLogs):
+            getHomeAwayFlag(gameLogs)
+            gameLogs = getHomeWinPctg(gameLogs)
+            gameLogs = getAwayWinPctg(gameLogs)
+            gameLogs = getTotalWinPctg(gameLogs)
+            getRollingScoringMargin(gameLogs)
+            getRollingOE(gameLogs)
+            gameLogs = getRestDays(gameLogs)
+
+            return gameLogs
+        
         start = time.perf_counter_ns()
 
-        i = int(len(gameLogs)/2) #Can use a previously completed gameLog dataset
+        i = 0 #Can use a previously completed gameLog dataset
 
         while i<len(scheduleFrame):
 
@@ -151,20 +163,11 @@ def generate_database(seasons: list[int], seasonType: str):
                 mins = ((end-start)/1e9)/60
                 print(f"{i} games procesed in: {int(mins)} minutes")
 
-            i+=1
-            
-        # Get Table Level Aggregation Columns
-        getHomeAwayFlag(gameLogs)
-        gameLogs = getHomeWinPctg(gameLogs)
-        gameLogs = getAwayWinPctg(gameLogs)
-        gameLogs = getTotalWinPctg(gameLogs)
-        getRollingScoringMargin(gameLogs)
-        getRollingOE(gameLogs)
-        gameLogs = getRestDays(gameLogs)
+            i += 1
 
-        return gameLogs.reset_index(drop=True)
+        return getmetrics(gameLogs).reset_index(drop=True)
     
-    conexion = sqlite3.connect("NBA_DATA.db")
+    conexion = sqlite3.connect(DATABASE_NAME)
 
     cursor = conexion.cursor()
 
@@ -255,8 +258,16 @@ def generate_database(seasons: list[int], seasonType: str):
     for season in seasons:
         print(f"Generation season schedule and game logs for season {season}")
         start = time.perf_counter_ns()
+        # Get all the avaliable games for the season
         scheduleFrame = getSeasonScheduleFrame(season, seasonType, teamLookup)
-        scheduleFrame.to_sql("GAMES", conexion, if_exists="append", index=False)
+
+        # Get the games already in the database
+        cursor.execute("SELECT GAME_ID FROM GAMES")
+        existing_game_ids = set(row[0] for row in cursor.fetchall())
+
+        # Get and save just the new games
+        new_games = scheduleFrame[~scheduleFrame['GAME_ID'].isin(existing_game_ids)]
+        new_games.to_sql("GAMES", conexion, if_exists="append", index=False)
         end = time.perf_counter_ns()
 
         secs = (end-start)/1e9
@@ -265,7 +276,14 @@ def generate_database(seasons: list[int], seasonType: str):
 
         start = time.perf_counter_ns()
         gameLogs = pd.DataFrame()
-        gameLogs = getGameLogs(gameLogs,scheduleFrame)
+
+        cursor.execute("""
+        SELECT * 
+        FROM GAMES 
+        WHERE GAME_ID NOT IN (SELECT GAME_ID FROM GAME_STATS)
+        """)
+        games_without_stats = cursor.fetchall()
+        gameLogs = getGameLogs(gameLogs,games_without_stats)
         gameLogs.to_csv('gameLogs.csv')
         gameLogs.to_sql("GAME_STATS", conexion, if_exists="append", index=False)
 
