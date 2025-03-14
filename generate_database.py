@@ -99,8 +99,14 @@ def generate_database(seasons: list[int], seasonType: str):
         
         # Functions to prepare additional columns after gameLogs table loads
         def getHomeAwayFlag(gameDF):
-            gameDF['HOME_FLAG'] = np.where((gameDF['W_HOME']==1) | (gameDF['L_HOME']==1),1,0)
-            gameDF['AWAY_FLAG'] = np.where((gameDF['W_ROAD']==1) | (gameDF['L_ROAD']==1),1,0)
+            gameDF['HOME_FLAG'] = gameDF['CITY'].apply(lambda x: 0 if x == 'OPPONENTS' else 1)
+            gameDF['AWAY_FLAG'] = gameDF['CITY'].apply(lambda x: 1 if x == 'OPPONENTS' else 0)
+
+            # Rellenar las columnas W_HOME, L_HOME, W_ROAD, L_ROAD
+            gameDF['W_HOME'] = gameDF.apply(lambda row: row['W'] if row['HOME_FLAG'] == 1 else 0, axis=1)
+            gameDF['L_HOME'] = gameDF.apply(lambda row: row['L'] if row['HOME_FLAG'] == 1 else 0, axis=1)
+            gameDF['W_ROAD'] = gameDF.apply(lambda row: row['W'] if row['AWAY_FLAG'] == 1 else 0, axis=1)
+            gameDF['L_ROAD'] = gameDF.apply(lambda row: row['L'] if row['AWAY_FLAG'] == 1 else 0, axis=1)
             #return gameDF 
 
         def getTotalWinPctg(gameDF):
@@ -128,6 +134,7 @@ def generate_database(seasons: list[int], seasonType: str):
             gameDF['ROLLING_SCORING_MARGIN'] = gameDF.sort_values(by='GAME_DATE').groupby(['TEAM_ID','SEASON'])['SCORING_MARGIN'].transform(lambda x: x.rolling(3, 1).mean())
 
         def getRestDays(gameDF):
+            gameDF['GAME_DATE'] = pd.to_datetime(gameDF['GAME_DATE'])
             gameDF['LAST_GAME_DATE'] = gameDF.sort_values(by='GAME_DATE').groupby(['TEAM_ID','SEASON'])['GAME_DATE'].shift(1)
             gameDF['NUM_REST_DAYS'] = (gameDF['GAME_DATE'] - gameDF['LAST_GAME_DATE'])/np.timedelta64(1,'D') 
             return gameDF.drop('LAST_GAME_DATE',axis=1)
@@ -151,8 +158,8 @@ def generate_database(seasons: list[int], seasonType: str):
 
 
             time.sleep(10)
-            gameLogs = pd.concat([gameLogs, getSingleGameMetrics(scheduleFrame.at[i,'GAME_ID'],scheduleFrame.at[i,'HOME_TEAM_ID'],
-                            scheduleFrame.at[i,'AWAY_TEAM_ID'],scheduleFrame.at[i,'AWAY_TEAM_NICKNAME'],
+            gameLogs = pd.concat([gameLogs, getSingleGameMetrics(scheduleFrame.at[i,'GAME_ID'],scheduleFrame.at[i,'H_TEAM_ID'],
+                            scheduleFrame.at[i,'A_TEAM_ID'],scheduleFrame.at[i,'A_TEAM_NICKNAME'],
                             scheduleFrame.at[i,'SEASON'],scheduleFrame.at[i,'GAME_DATE'])])
             
             gameLogs = gameLogs.reset_index(drop=True)
@@ -165,7 +172,7 @@ def generate_database(seasons: list[int], seasonType: str):
 
             i += 1
 
-        return getmetrics(gameLogs).reset_index(drop=True)
+        return getmetrics(gameLogs).reset_index(drop=True).drop(columns=['GAME_DATE', 'SEASON'])
     
     conexion = sqlite3.connect(DATABASE_NAME)
 
@@ -186,7 +193,7 @@ def generate_database(seasons: list[int], seasonType: str):
     # Crear la tabla GAMES
     cursor.execute("""
     create table If Not Exists GAMES (
-    GAME_ID bigint primary key,
+    GAME_ID text primary key,
     GAME_DATE date not null,
     H_TEAM_NICKNAME text not null,
     A_TEAM_NICKNAME text not null,
@@ -199,7 +206,7 @@ def generate_database(seasons: list[int], seasonType: str):
     # Crear la tabla TEAM_INFO_COMMON
     cursor.execute("""
     create table If Not Exists GAME_STATS (
-    GAME_ID bigint references games (GAME_ID),
+    GAME_ID text references games (GAME_ID),
     HOME_FLAG boolean not null,
     AWAY_FLAG boolean not null,
     CITY text,
@@ -255,6 +262,7 @@ def generate_database(seasons: list[int], seasonType: str):
 
     teamLookup.to_sql("TEAMS", conexion, if_exists="replace", index=False)
 
+    TOTAL_GAMELOGS = []
     for season in seasons:
         print(f"Generation season schedule and game logs for season {season}")
         start = time.perf_counter_ns()
@@ -266,7 +274,8 @@ def generate_database(seasons: list[int], seasonType: str):
         existing_game_ids = set(row[0] for row in cursor.fetchall())
 
         # Get and save just the new games
-        new_games = scheduleFrame[~scheduleFrame['GAME_ID'].isin(existing_game_ids)]
+        new_games = scheduleFrame[~scheduleFrame['GAME_ID'].isin(existing_game_ids)].rename(columns={"HOME_TEAM_NICKNAME": "H_TEAM_NICKNAME", "HOME_TEAM_ID": "H_TEAM_ID",
+                                                   "AWAY_TEAM_NICKNAME": "A_TEAM_NICKNAME", "AWAY_TEAM_ID": "A_TEAM_ID"}).drop(columns='MATCHUP')
         new_games.to_sql("GAMES", conexion, if_exists="append", index=False)
         end = time.perf_counter_ns()
 
@@ -277,21 +286,27 @@ def generate_database(seasons: list[int], seasonType: str):
         start = time.perf_counter_ns()
         gameLogs = pd.DataFrame()
 
-        cursor.execute("""
+        season_str = f'{season}-{season+1-2000}'
+        query = f"""
         SELECT * 
         FROM GAMES 
-        WHERE GAME_ID NOT IN (SELECT GAME_ID FROM GAME_STATS)
-        """)
-        games_without_stats = cursor.fetchall()
-        gameLogs = getGameLogs(gameLogs,games_without_stats)
-        gameLogs.to_csv('gameLogs.csv')
-        gameLogs.to_sql("GAME_STATS", conexion, if_exists="append", index=False)
+        WHERE SEASON = '{season_str}' AND GAME_ID NOT IN (SELECT GAME_ID FROM GAME_STATS)
+        """
+        games_without_stats = pd.read_sql_query(query, conexion)
+        print(len(games_without_stats))
+        if len(games_without_stats) > 0:
+            gameLogs = getGameLogs(gameLogs,games_without_stats)
+        #gameLogs.to_csv('gameLogs.csv')
+        try:
+            gameLogs.to_sql("GAME_STATS", conexion, if_exists="append", index=False)
+        except:
+            print("Error saving gameLogs in year", season)
 
         end = time.perf_counter_ns()
 
         secs = (end-start)/1e9
         mins = secs/60
         print(f"GameLogs takes: {int(mins)}:{int(secs)%60}")
+        TOTAL_GAMELOGS.append(gameLogs)
 
-
-    return "Database generated"
+    return TOTAL_GAMELOGS
