@@ -21,7 +21,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 from datetime import timedelta, datetime
-from maper import EQUIPOS_ODDS
+from src.Data.maper import EQUIPOS_ODDS
 
 
 
@@ -438,8 +438,9 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
             result = pd.read_sql_query(query, conexion, params=[home_team_id, away_team_id, start_date, game_date])
             
             if not result.empty:
+                result.sort_values(by='GAME_DATE', ascending=False, inplace=True)
                 if len(result) > 1:
-                    game_ids.append(result.iloc[-1]['GAME_ID'])
+                    game_ids.append(result.loc[result["GAME_DATE"] == game_date]['GAME_ID'])
                 else:
                     game_ids.append(result.iloc[0]['GAME_ID'])
             else:
@@ -447,8 +448,8 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
         dataset_urls['GAME_ID'] = game_ids
 
         return dataset_urls[['URL', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'GAME_DATE', 'GAME_ID']]
-    
-    def get_dataset_ods(url: str):
+
+    def get_season(url: str):
         conexion = sqlite3.connect("NBA_DATA.db")
         season = url.split('/')[5].split('-')[1:]
         season = season[0] + '-'+season[1][2:]
@@ -463,83 +464,81 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
 
     def get_odds(dataset_urls: pd.DataFrame):
 
-        keys = ['URL', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'id', 'GAME_DATE', 'Averge_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']
+        keys = ['URL', 'GAME_ID', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'GAME_DATE', 'Average_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']
         extensiones = ['#1X2;3', '#home-away;1', '#double;3']
         columnas = [['Average_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2'],['Average_H', 'Average_A', 'Highest_H', 'Highest_A'],
                 ['Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']]
-        
-        dataset_urls = get_game_id(dataset_urls)
-        ids = get_dataset_ods(dataset_urls.iloc[-1]['URL'])
 
+        dataset_urls = get_game_id(dataset_urls)
+        ids = list(get_season(dataset_urls.iloc[-1]['URL']))
+        filtered_dataset_urls = dataset_urls[~dataset_urls['GAME_ID'].isin(ids)]
+        filtered_dataset_urls = dataset_urls[(~dataset_urls['GAME_ID'].isin(ids)) & (dataset_urls['GAME_ID'].notna())]
+        
         options = Options()
         #options.add_experimental_option("detach", True)
         options.add_argument("--disable-search-engine-choice-screen")
         options.add_argument("--headless")
         
-        dataset_ods = pd.DataFrame(columns=columnas)
+        dataset_ods = pd.DataFrame(columns=keys)
 
-        for index, row in dataset_urls.iterrows():
+        for index, row in filtered_dataset_urls.iterrows():
 
-            if row['GAME_ID'] not in ids:
+            print(index)
+            diccionario_estadisticas = {key: None for key in keys}
+            diccionario_estadisticas['URL'] = row['URL']
+            diccionario_estadisticas['H_TEAM_NICKNAME'] = row['H_TEAM_NICKNAME']
+            diccionario_estadisticas['A_TEAM_NICKNAME'] = row['A_TEAM_NICKNAME']
+            diccionario_estadisticas['GAME_DATE'] = row['GAME_DATE']
+            diccionario_estadisticas['GAME_ID'] = row['GAME_ID']
+            i = -1
+            for extension in extensiones:
+                
+                try:
+                    i += 1
+                    url = row['URL'] + extension
 
-                print(index)
-                diccionario_estadisticas = {key: None for key in keys}
-                diccionario_estadisticas['URL'] = row['URL']
-                diccionario_estadisticas['H_TEAM_NICKNAME'] = row['H_TEAM_NICKNAME']
-                diccionario_estadisticas['A_TEAM_NICKNAME'] = row['A_TEAM_NICKNAME']
-                diccionario_estadisticas['GAME_DATE'] = row['GAME_DATE']
-                diccionario_estadisticas['GAME_ID'] = row['GAME_ID']
-                i = -1
-                for extension in extensiones:
-                    
-                    try:
-                        i += 1
-                        url = row['URL'] + extension
+                    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()),options=options)
 
-                        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()),options=options)
+                    driver.get(url)
+                    driver.maximize_window()
+                    time.sleep(3)
+                    last_height = driver.execute_script("return document.body.scrollHeight")
+                    while True:
+                        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(3)  # Espera un poco para que se cargue el contenido dinámico
+                        new_height = driver.execute_script("return document.body.scrollHeight")
+                        if new_height == last_height:
+                            break
+                        last_height = new_height
+                        
+                    html = driver.page_source
 
-                        driver.get(url)
-                        driver.maximize_window()
-                        time.sleep(3)
-                        last_height = driver.execute_script("return document.body.scrollHeight")
-                        while True:
-                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                            time.sleep(3)  # Espera un poco para que se cargue el contenido dinámico
-                            new_height = driver.execute_script("return document.body.scrollHeight")
-                            if new_height == last_height:
-                                break
-                            last_height = new_height
-                            
-                        html = driver.page_source
+                    soup = BeautifulSoup(html, 'html.parser')
 
-                        soup = BeautifulSoup(html, 'html.parser')
+                    divs = soup.find_all('div', class_='border-black-borders flex h-9 border-b border-l border-r text-xs')
 
-                        if i == 0 or i == 1 or i == 2:
-                            divs = soup.find_all('div', class_='border-black-borders flex min-w-[60px] flex-col items-center justify-center gap-1 border-l')
-                            temp = []
-                            for div in divs:
-                                
-                                if len(str(div)) == 240 or len(str(div)) == 241:
-                                    if div.find('p', class_='height-content').text[-1] != "%":
-                                        temp.append(div)
-                            for j in range(len(temp)):
-                                diccionario_estadisticas[columnas[i][j]] = temp[j].find('p', class_='height-content').text
-                    except Exception as e:
-                        # Si ocurre un error, se captura la excepción y se imprime la variable
-                        print(f"Ocurrió un error: {e} en el partido {index}")
+                    for div in divs:
+                        ps = div.find_all('p', class_='height-content')
+                        calculator_list = [[] for _ in range(len(ps)-1)]
+                        for i in range(len(ps)-1):
+                            calculator_list[i].append(float(ps[i+1].text))
+                    from statistics import mean
+                    medias = [mean(lista) for lista in calculator_list]
+
+                    # Aplicar la transformación según la condición
+                    for j in range(len(medias)):
+                        diccionario_estadisticas[columnas[i][j]] = medias[j]
+                except Exception as e:
+                    # Si ocurre un error, se captura la excepción y se imprime la variable
+                    print(f"Ocurrió un error: {e} en el partido {index}")
 
             data_df = pd.DataFrame([diccionario_estadisticas])
+            #data_df[['GAME_ID', 'Average_1', 'Average_X', 'Average_2', 'Highest_1', 'Highest_X', 'Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X', 'Average_12', 'Average_X2', 'Highest_1X', 'Highest_12', 'Highest_X2']].to_sql('GAME_ODS', conexion, if_exists='append', index=False)
             # Aqui debo incluir el formateo para que todo funcione correctamente
             dataset_ods = pd.concat([dataset_ods, data_df], ignore_index=True)
         return dataset_ods
-
     
-
     def process_odds(dataset_ods: pd.DataFrame):
-        dataset_ods['H_TEAM_ID'] = dataset_ods['H_TEAM_NICKNAME'].map(EQUIPOS_ODDS).replace({float('nan'): None})
-        dataset_ods['A_TEAM_ID'] = dataset_ods['A_TEAM_NICKNAME'].map(EQUIPOS_ODDS).replace({float('nan'): None})
-        dataset_ods['GAME_DATE'] = pd.to_datetime(dataset_ods['GAME_DATE'])
-
         conexion = sqlite3.connect("NBA_DATA.db")
 
         query = """
@@ -547,12 +546,11 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
         FROM GAME_ODS
         """
         result = pd.read_sql_query(query, conexion)
-        dataset_ods = dataset_ods[~dataset_ods['GAME_ID'].isin(result['GAME_ID'])]
+        dataset_ods = dataset_ods[~dataset_ods['GAME_ID'].isin(list(result['GAME_ID']))]
 
         # Cerrar la conexión
         conexion.close()
         return dataset_ods[['GAME_ID', 'Average_1', 'Average_X', 'Average_2', 'Highest_1', 'Highest_X', 'Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X', 'Average_12', 'Average_X2', 'Highest_1X', 'Highest_12', 'Highest_X2']]
-
     
     conexion = sqlite3.connect("NBA_DATA.db") 
 

@@ -1,5 +1,3 @@
-
-
 EQUIPOS_ODDS = {
     "Oklahoma City Thunder": 1610612760,
     "Boston Celtics": 1610612738,
