@@ -87,7 +87,7 @@ def generate_database(seasons: list[int], seasonType: str):
     def getSingleGameMetrics(gameID,homeTeamID,awayTeamID,awayTeamNickname,seasonYear,gameDate,seasonType:str):
 
         @retry
-        def getGameStats(teamID,gameID,seasonYear):
+        def getGameStats(teamID,gameID,seasonYear,seasonType):
             #season = str(seasonYear) + "-" + str(seasonYear+1)[-2:]
             gameStats = cumestatsteam.CumeStatsTeam(game_ids=gameID,league_id ="00",
                                                 season=seasonYear,season_type_all_star=seasonType,
@@ -177,7 +177,7 @@ def generate_database(seasons: list[int], seasonType: str):
             time.sleep(10)
             gameLogs = pd.concat([gameLogs, getSingleGameMetrics(scheduleFrame.at[i,'GAME_ID'],scheduleFrame.at[i,'H_TEAM_ID'],
                             scheduleFrame.at[i,'A_TEAM_ID'],scheduleFrame.at[i,'A_TEAM_NICKNAME'],
-                            scheduleFrame.at[i,'SEASON'],scheduleFrame.at[i,'GAME_DATE'])],seasonType)
+                            scheduleFrame.at[i,'SEASON'],scheduleFrame.at[i,'GAME_DATE'],seasonType)])
             
             gameLogs = gameLogs.reset_index(drop=True)
 
@@ -623,11 +623,13 @@ def database_actualization():
     seasons = [2024]
     seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
     for type in seasonType:
+        if type == 'All Star' or type == 'Pre Season':
+            continue
         generate_database(seasons, type)
 
     print("Generando tabla de odds")
     urls = ['https://www.oddsportal.com/basketball/usa/nba-2023-2024/results/']
-    pages = [2]
+    pages = [3]
 
     columnas = ['URL', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'id', 'GAME_DATE', 'Averge_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']
     dataset_ods = pd.DataFrame(columns=columnas)
