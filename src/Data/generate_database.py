@@ -470,7 +470,7 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
                 ['Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']]
 
         dataset_urls = get_game_id(dataset_urls)
-        ids = list(get_season(dataset_urls.iloc[-1]['URL']))
+        ids = list(get_season(dataset_urls.iloc[-1]['URL'])['GAME_ID'])
         filtered_dataset_urls = dataset_urls[~dataset_urls['GAME_ID'].isin(ids)]
         filtered_dataset_urls = dataset_urls[(~dataset_urls['GAME_ID'].isin(ids)) & (dataset_urls['GAME_ID'].notna())]
         
@@ -620,16 +620,16 @@ def database_inicialization():
         dataset_ods = generate_ods_table(urls[i], pages[i],dataset_ods)
 
 def database_actualization():
-    seasons = [2024]
-    seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
-    for type in seasonType:
-        if type == 'All Star' or type == 'Pre Season':
-            continue
-        generate_database(seasons, type)
+    #seasons = [2024]
+    #seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
+    #for type in seasonType:
+    #    if type == 'All Star' or type == 'Pre Season':
+    #        continue
+    #    generate_database(seasons, type)
 
     print("Generando tabla de odds")
-    urls = ['https://www.oddsportal.com/basketball/usa/nba-2023-2024/results/']
-    pages = [3]
+    urls = ['https://www.oddsportal.com/basketball/usa/nba-2017-2018/results/']
+    pages = [28]
 
     columnas = ['URL', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'id', 'GAME_DATE', 'Averge_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']
     dataset_ods = pd.DataFrame(columns=columnas)
