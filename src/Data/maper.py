@@ -27,4 +27,6 @@ EQUIPOS_ODDS = {
     "Dallas Mavericks": 1610612742,
     "Charlotte Hornets": 1610612766,
     "Washington Wizards": 1610612764,
+    "Utah Jazz": 1610612762,
+    "New Orleans Pelicans": 1610612740,
 }

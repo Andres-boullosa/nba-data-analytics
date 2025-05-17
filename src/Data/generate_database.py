@@ -473,6 +473,7 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
         ids = list(get_season(dataset_urls.iloc[-1]['URL'])['GAME_ID'])
         filtered_dataset_urls = dataset_urls[~dataset_urls['GAME_ID'].isin(ids)]
         filtered_dataset_urls = dataset_urls[(~dataset_urls['GAME_ID'].isin(ids)) & (dataset_urls['GAME_ID'].notna())]
+        print(f"len to search: {len(filtered_dataset_urls)}")
         
         options = Options()
         #options.add_experimental_option("detach", True)
@@ -620,12 +621,12 @@ def database_inicialization():
         dataset_ods = generate_ods_table(urls[i], pages[i],dataset_ods)
 
 def database_actualization():
-    #seasons = [2024]
-    #seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
-    #for type in seasonType:
-    #    if type == 'All Star' or type == 'Pre Season':
-    #        continue
-    #    generate_database(seasons, type)
+    seasons = [2017]
+    """ seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
+    for type in seasonType:
+        if type == 'All Star' or type == 'Pre Season':
+            continue
+        generate_database(seasons, type) """
 
     print("Generando tabla de odds")
     urls = ['https://www.oddsportal.com/basketball/usa/nba-2017-2018/results/']
