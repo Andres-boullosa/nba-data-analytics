@@ -53,8 +53,8 @@ def generate_database(seasons: list[int], seasonType: str):
         def getAwayTeam(matchup):
             return matchup.partition(' at')[0][10:]
 
-        def getTeamIDFromNickname(nickname):
-            return teamLookup.loc[teamLookup['TEAM_NICKNAME'] == difflib.get_close_matches(nickname, teamLookup['TEAM_NICKNAME'], 1)[0]].values[0][0]
+        def getMapper():
+            return teamLookup.set_index('TEAM_NICKNAME')['TEAM_ID'].to_dict()
 
         @retry
         def getRegularSeasonSchedule(season, teamID, seasonType):
@@ -75,11 +75,12 @@ def generate_database(seasons: list[int], seasonType: str):
             scheduleFrame = pd.concat([scheduleFrame, teamGames], ignore_index=True)
 
         scheduleFrame['GAME_DATE'] = pd.to_datetime(scheduleFrame['MATCHUP'].map(getGameDate))
-        scheduleFrame['HOME_TEAM_NICKNAME'] = scheduleFrame['MATCHUP'].map(getHomeTeam)
-        scheduleFrame['HOME_TEAM_ID'] = scheduleFrame['HOME_TEAM_NICKNAME'].map(getTeamIDFromNickname)
-        scheduleFrame['AWAY_TEAM_NICKNAME'] = scheduleFrame['MATCHUP'].map(getAwayTeam)
-        scheduleFrame['AWAY_TEAM_ID'] = scheduleFrame['AWAY_TEAM_NICKNAME'].map(getTeamIDFromNickname)
-        scheduleFrame = scheduleFrame.drop_duplicates()  # There's a row for both teams, only need 1
+        scheduleFrame['HOME_TEAM_NICKNAME'] = scheduleFrame['MATCHUP'].map(getHomeTeam).str.lstrip()
+        scheduleFrame['HOME_TEAM_ID'] = pd.to_numeric(scheduleFrame['HOME_TEAM_NICKNAME'].map(getMapper())).astype('Int64')
+        scheduleFrame['AWAY_TEAM_NICKNAME'] = scheduleFrame['MATCHUP'].map(getAwayTeam).str.lstrip()
+        scheduleFrame['AWAY_TEAM_ID'] = pd.to_numeric(scheduleFrame['AWAY_TEAM_NICKNAME'].map(getMapper())).astype('Int64')
+        scheduleFrame["GAME_TYPE"] = seasonType
+        scheduleFrame = scheduleFrame.drop_duplicates().dropna() # There's a row for both teams, only need 1
         scheduleFrame = scheduleFrame.reset_index(drop=True)
 
         return scheduleFrame
@@ -216,7 +217,8 @@ def generate_database(seasons: list[int], seasonType: str):
     A_TEAM_NICKNAME text not null,
     H_TEAM_ID int references teams (TEAM_ID),
     A_TEAM_ID int references teams (TEAM_ID),
-    SEASON int not null
+    SEASON int not null,
+    GAME_TYPE text not null
     )
     """)
 
@@ -310,6 +312,8 @@ def generate_database(seasons: list[int], seasonType: str):
         WHERE SEASON = '{season_str}' AND GAME_ID NOT IN (SELECT GAME_ID FROM GAME_STATS)
         """
         games_without_stats = pd.read_sql_query(query, conexion)
+        games_without_stats['H_TEAM_ID'] = pd.to_numeric(games_without_stats['H_TEAM_ID'], errors='coerce').astype('Int64')
+        games_without_stats['A_TEAM_ID'] = pd.to_numeric(games_without_stats['A_TEAM_ID'], errors='coerce').astype('Int64')
         print(len(games_without_stats))
         if len(games_without_stats) > 0:
             gameLogs = getGameLogs(gameLogs,games_without_stats,seasonType)
@@ -330,7 +334,10 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
     def scroll_to_bottom(driver, pause_time=2):
         """Desplazarse poco a poco hasta el final de la página."""
         last_height = driver.execute_script("return document.body.scrollHeight*0.9")
-        
+        svg_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
+        )
+        svg_button.click()
         while True:
             # Desplazarse hacia abajo
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight*0.9);")
@@ -456,11 +463,10 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
 
         query = """
             SELECT GAME_ID
-            FROM GAMES
-            WHERE SEASON = ?
+            FROM GAME_ODS
             """
         
-        return pd.read_sql_query(query, conexion, params=[season])
+        return pd.read_sql_query(query, conexion)
 
     def get_odds(dataset_urls: pd.DataFrame):
 
@@ -468,11 +474,17 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
         extensiones = ['#1X2;3', '#home-away;1', '#double;3']
         columnas = [['Average_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2'],['Average_H', 'Average_A', 'Highest_H', 'Highest_A'],
                 ['Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']]
-
+        float_columns_to_convert = [
+            'Average_1', 'Average_X', 'Average_2', 'Highest_1', 'Highest_X',
+            'Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A',
+            'Average_1X', 'Average_12', 'Average_X2', 'Highest_1X', 'Highest_12',
+            'Highest_X2'
+        ]
+        str_columns_to_convert = ['GAME_ID', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME','URL']
         dataset_urls = get_game_id(dataset_urls)
         ids = list(get_season(dataset_urls.iloc[-1]['URL'])['GAME_ID'])
-        filtered_dataset_urls = dataset_urls[~dataset_urls['GAME_ID'].isin(ids)]
-        filtered_dataset_urls = dataset_urls[(~dataset_urls['GAME_ID'].isin(ids)) & (dataset_urls['GAME_ID'].notna())]
+        # filtered_dataset_urls = dataset_urls[~dataset_urls['GAME_ID'].isin(ids)]
+        filtered_dataset_urls = dataset_urls[(~dataset_urls['GAME_ID'].isin(ids)) & (dataset_urls['GAME_ID'].notna())].reset_index(drop=True)
         print(f"len to search: {len(filtered_dataset_urls)}")
         
         options = Options()
@@ -503,6 +515,10 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
                     driver.get(url)
                     driver.maximize_window()
                     time.sleep(3)
+                    svg_button = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
+                    )
+                    svg_button.click()
                     last_height = driver.execute_script("return document.body.scrollHeight")
                     while True:
                         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -537,6 +553,14 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
             #data_df[['GAME_ID', 'Average_1', 'Average_X', 'Average_2', 'Highest_1', 'Highest_X', 'Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X', 'Average_12', 'Average_X2', 'Highest_1X', 'Highest_12', 'Highest_X2']].to_sql('GAME_ODS', conexion, if_exists='append', index=False)
             # Aqui debo incluir el formateo para que todo funcione correctamente
             dataset_ods = pd.concat([dataset_ods, data_df], ignore_index=True)
+
+        for col in float_columns_to_convert:
+            if col in dataset_ods.columns:
+
+                dataset_ods[col] = pd.to_numeric(dataset_ods[col], errors='coerce')
+        for col in str_columns_to_convert:
+            dataset_ods[col] = dataset_ods[col].apply(str)
+
         return dataset_ods
     
     def process_odds(dataset_ods: pd.DataFrame):
@@ -594,7 +618,7 @@ def database_inicialization():
     seasons = [2017, 2018, 2019, 2020, 2021, 2022, 2023]
     seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
     for type in seasonType:
-        if type == 'All Star' or type == 'Pre Season':
+        if type == 'All Star':
             continue
         generate_database(seasons, type)
 
@@ -621,16 +645,16 @@ def database_inicialization():
         dataset_ods = generate_ods_table(urls[i], pages[i],dataset_ods)
 
 def database_actualization():
-    seasons = [2017]
-    """ seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
-    for type in seasonType:
-        if type == 'All Star' or type == 'Pre Season':
-            continue
-        generate_database(seasons, type) """
+    # seasons = [2024]
+    # seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
+    # for type in seasonType:
+    #     if type == 'All Star':
+    #         continue
+    #     generate_database(seasons, type)
 
     print("Generando tabla de odds")
-    urls = ['https://www.oddsportal.com/basketball/usa/nba-2017-2018/results/']
-    pages = [28]
+    urls = ['https://www.oddsportal.com/basketball/usa/nba/results/']
+    pages = [4]
 
     columnas = ['URL', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'id', 'GAME_DATE', 'Averge_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']
     dataset_ods = pd.DataFrame(columns=columnas)
