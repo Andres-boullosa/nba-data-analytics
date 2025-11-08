@@ -24,6 +24,7 @@ from datetime import timedelta, datetime
 from src.Data.maper import EQUIPOS_ODDS
 
 
+SEASON = None
 
 DATABASE_NAME = "NBA_DATA.db"
 
@@ -74,6 +75,8 @@ def generate_database(seasons: list[int], seasonType: str):
             teamGames = getRegularSeasonSchedule(season, id, seasonType)
             scheduleFrame = pd.concat([scheduleFrame, teamGames], ignore_index=True)
 
+        if len(scheduleFrame) == 0:
+            return None
         scheduleFrame['GAME_DATE'] = pd.to_datetime(scheduleFrame['MATCHUP'].map(getGameDate))
         scheduleFrame['HOME_TEAM_NICKNAME'] = scheduleFrame['MATCHUP'].map(getHomeTeam).str.lstrip()
         scheduleFrame['HOME_TEAM_ID'] = pd.to_numeric(scheduleFrame['HOME_TEAM_NICKNAME'].map(getMapper())).astype('Int64')
@@ -184,7 +187,7 @@ def generate_database(seasons: list[int], seasonType: str):
 
             end = time.perf_counter_ns()
 
-            if i%100 == 0:
+            if i%10 == 0:
                 mins = ((end-start)/1e9)/60
                 print(f"{i} games procesed in: {int(mins)} minutes")
 
@@ -288,54 +291,56 @@ def generate_database(seasons: list[int], seasonType: str):
         # Get all the avaliable games for the season
         scheduleFrame = getSeasonScheduleFrame(season, seasonType, teamLookup)
 
-        # Get the games already in the database
-        cursor.execute("SELECT GAME_ID FROM GAMES")
-        existing_game_ids = set(row[0] for row in cursor.fetchall())
+        if scheduleFrame:
+            # Get the games already in the database
+            cursor.execute("SELECT GAME_ID FROM GAMES")
+            existing_game_ids = set(row[0] for row in cursor.fetchall())
 
-        # Get and save just the new games
-        new_games = scheduleFrame[~scheduleFrame['GAME_ID'].isin(existing_game_ids)].rename(columns={"HOME_TEAM_NICKNAME": "H_TEAM_NICKNAME", "HOME_TEAM_ID": "H_TEAM_ID",
-                                                   "AWAY_TEAM_NICKNAME": "A_TEAM_NICKNAME", "AWAY_TEAM_ID": "A_TEAM_ID"}).drop(columns='MATCHUP')
-        new_games.to_sql("GAMES", conexion, if_exists="append", index=False)
-        end = time.perf_counter_ns()
+            # Get and save just the new games
+            new_games = scheduleFrame[~scheduleFrame['GAME_ID'].isin(existing_game_ids)].rename(columns={"HOME_TEAM_NICKNAME": "H_TEAM_NICKNAME", "HOME_TEAM_ID": "H_TEAM_ID",
+                                                    "AWAY_TEAM_NICKNAME": "A_TEAM_NICKNAME", "AWAY_TEAM_ID": "A_TEAM_ID"}).drop(columns='MATCHUP')
+            new_games.to_sql("GAMES", conexion, if_exists="append", index=False)
+            end = time.perf_counter_ns()
 
-        secs = (end-start)/1e9
-        mins = secs/60
-        print(f"scheduleFrame takes: {int(mins)}:{int(secs)%60}")
+            secs = (end-start)/1e9
+            mins = secs/60
+            print(f"scheduleFrame takes: {int(mins)}:{int(secs)%60}")
 
-        start = time.perf_counter_ns()
-        gameLogs = pd.DataFrame()
+            start = time.perf_counter_ns()
+            gameLogs = pd.DataFrame()
 
-        season_str = f'{season}-{season+1-2000}'
-        query = f"""
-        SELECT * 
-        FROM GAMES 
-        WHERE SEASON = '{season_str}' AND GAME_ID NOT IN (SELECT GAME_ID FROM GAME_STATS)
-        """
-        games_without_stats = pd.read_sql_query(query, conexion)
-        games_without_stats['H_TEAM_ID'] = pd.to_numeric(games_without_stats['H_TEAM_ID'], errors='coerce').astype('Int64')
-        games_without_stats['A_TEAM_ID'] = pd.to_numeric(games_without_stats['A_TEAM_ID'], errors='coerce').astype('Int64')
-        print(len(games_without_stats))
-        if len(games_without_stats) > 0:
-            gameLogs = getGameLogs(gameLogs,games_without_stats,seasonType)
-        #gameLogs.to_csv('gameLogs.csv')
-        try:
-            gameLogs.to_sql("GAME_STATS", conexion, if_exists="append", index=False)
-        except:
-            print("Error saving gameLogs in year", season)
+            season_str = f'{season}-{season+1-2000}'
+            query = f"""
+            SELECT * 
+            FROM GAMES 
+            WHERE SEASON = '{season_str}' AND GAME_ID NOT IN (SELECT GAME_ID FROM GAME_STATS)
+            """
+            games_without_stats = pd.read_sql_query(query, conexion)
+            games_without_stats['H_TEAM_ID'] = pd.to_numeric(games_without_stats['H_TEAM_ID'], errors='coerce').astype('Int64')
+            games_without_stats['A_TEAM_ID'] = pd.to_numeric(games_without_stats['A_TEAM_ID'], errors='coerce').astype('Int64')
+            print(len(games_without_stats))
+            if len(games_without_stats) > 0:
+                gameLogs = getGameLogs(gameLogs,games_without_stats,seasonType)
+            #gameLogs.to_csv('gameLogs.csv')
+            try:
+                gameLogs.to_sql("GAME_STATS", conexion, if_exists="append", index=False)
+            except:
+                print("Error saving gameLogs in year", season)
 
-        end = time.perf_counter_ns()
+            end = time.perf_counter_ns()
 
-        secs = (end-start)/1e9
-        mins = secs/60
-        print(f"GameLogs takes: {int(mins)}:{int(secs)%60}")
-        TOTAL_GAMELOGS.append(gameLogs)
+            secs = (end-start)/1e9
+            mins = secs/60
+            print(f"GameLogs takes: {int(mins)}:{int(secs)%60}")
+            TOTAL_GAMELOGS.append(gameLogs)
 
 def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
     def scroll_to_bottom(driver, pause_time=2):
         """Desplazarse poco a poco hasta el final de la página."""
         last_height = driver.execute_script("return document.body.scrollHeight*0.9")
-        svg_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
+        svg_button = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.ID, "onetrust-reject-all-handler"))
+            #EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
         )
         svg_button.click()
         while True:
@@ -365,6 +370,8 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
         options = Options()
         #options.add_experimental_option("detach", True)
         options.add_argument("--disable-search-engine-choice-screen")
+        options.add_argument("--log-level=3")   # 0 = ALL, 3 = ERROR
+        options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
         j = 0
         while j <= pages-1:
@@ -458,8 +465,11 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
 
     def get_season(url: str):
         conexion = sqlite3.connect("NBA_DATA.db")
-        season = url.split('/')[5].split('-')[1:]
-        season = season[0] + '-'+season[1][2:]
+        if not SEASON:
+            season = url.split('/')[5].split('-')[1:]
+            season = season[0] + '-'+season[1][2:]
+        else:
+            season = str(SEASON) + '-' + str(SEASON+1)
 
         query = """
             SELECT GAME_ID
@@ -471,7 +481,7 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
     def get_odds(dataset_urls: pd.DataFrame):
 
         keys = ['URL', 'GAME_ID', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'GAME_DATE', 'Average_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']
-        extensiones = ['#1X2;3', '#home-away;1', '#double;3']
+        extensiones = ['#1X2;2', '#home-away;1', '#double;3']
         columnas = [['Average_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2'],['Average_H', 'Average_A', 'Highest_H', 'Highest_A'],
                 ['Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']]
         float_columns_to_convert = [
@@ -491,6 +501,8 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
         #options.add_experimental_option("detach", True)
         options.add_argument("--disable-search-engine-choice-screen")
         options.add_argument("--headless")
+        options.add_argument("--log-level=3")   # 0 = ALL, 3 = ERROR
+        options.add_experimental_option("excludeSwitches", ["enable-logging"])
         
         dataset_ods = pd.DataFrame(columns=keys)
 
@@ -503,11 +515,11 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
             diccionario_estadisticas['A_TEAM_NICKNAME'] = row['A_TEAM_NICKNAME']
             diccionario_estadisticas['GAME_DATE'] = row['GAME_DATE']
             diccionario_estadisticas['GAME_ID'] = row['GAME_ID']
-            i = -1
+            z = -1
             for extension in extensiones:
                 
                 try:
-                    i += 1
+                    z += 1
                     url = row['URL'] + extension
 
                     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()),options=options)
@@ -516,7 +528,8 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
                     driver.maximize_window()
                     time.sleep(3)
                     svg_button = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
+                        EC.element_to_be_clickable((By.ID, "onetrust-reject-all-handler"))
+                        #EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
                     )
                     svg_button.click()
                     last_height = driver.execute_script("return document.body.scrollHeight")
@@ -532,19 +545,24 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
 
                     soup = BeautifulSoup(html, 'html.parser')
 
-                    divs = soup.find_all('div', class_='border-black-borders flex h-9 border-b border-l border-r text-xs')
+                    divs = soup.find_all('div', class_='flex h-9 border-b border-l border-r border-black-borders text-xs')
 
+                    ps = divs[0].find_all('p', class_='odds-text') if len(divs) > 0 else []
+                    calculator_list = [[] for _ in range(len(ps))]
                     for div in divs:
-                        ps = div.find_all('p', class_='height-content')
-                        calculator_list = [[] for _ in range(len(ps)-1)]
-                        for i in range(len(ps)-1):
-                            calculator_list[i].append(float(ps[i+1].text))
+                        ps = div.find_all('p', class_='odds-text')
+                        for i in range(len(ps)):
+                            calculator_list[i].append(float(ps[i].text))
                     from statistics import mean
                     medias = [mean(lista) for lista in calculator_list]
+                    maximos = [max(lista) for lista in calculator_list]
+                    print(f"medias: {medias}")
+                    print(f"maximos: {maximos}")
 
                     # Aplicar la transformación según la condición
                     for j in range(len(medias)):
-                        diccionario_estadisticas[columnas[i][j]] = medias[j]
+                        diccionario_estadisticas[columnas[z][j]] = medias[j]
+                        diccionario_estadisticas[columnas[z][j+len(medias)]] = maximos[j]
                 except Exception as e:
                     # Si ocurre un error, se captura la excepción y se imprime la variable
                     print(f"Ocurrió un error: {e} en el partido {index}")
@@ -615,15 +633,16 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
 
 def database_inicialization():
 
-    seasons = [2017, 2018, 2019, 2020, 2021, 2022, 2023]
-    seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
-    for type in seasonType:
-        if type == 'All Star':
-            continue
-        generate_database(seasons, type)
+    seasons = [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
+    # seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
+    # for type in seasonType:
+    #     if type == 'All Star':
+    #         continue
+    #     generate_database(seasons, type)
 
     print("Generando tabla de odds")
-    urls = ['https://www.oddsportal.com/basketball/usa/nba-2023-2024/results/',
+    urls = [#'https://www.oddsportal.com/basketball/usa/nba-2024-2025/results/',
+            'https://www.oddsportal.com/basketball/usa/nba-2023-2024/results/',
             'https://www.oddsportal.com/basketball/usa/nba-2022-2023/results/',
             'https://www.oddsportal.com/basketball/usa/nba-2021-2022/results/',
             'https://www.oddsportal.com/basketball/usa/nba-2020-2021/results/',
@@ -631,6 +650,7 @@ def database_inicialization():
             'https://www.oddsportal.com/basketball/usa/nba-2018-2019/results/',
             'https://www.oddsportal.com/basketball/usa/nba-2017-2018/results/',]
     pages = [28,
+             28,
              28,
              28,
              28,
@@ -645,7 +665,9 @@ def database_inicialization():
         dataset_ods = generate_ods_table(urls[i], pages[i],dataset_ods)
 
 def database_actualization():
-    # seasons = [2024]
+    global SEASON 
+    SEASON = 2025
+    # seasons = [SEASON]
     # seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
     # for type in seasonType:
     #     if type == 'All Star':
