@@ -8,18 +8,13 @@ import numpy as np
 import json
 import difflib
 from bs4 import BeautifulSoup
-import time
-import requests
-import pandas as pd
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
 from datetime import timedelta, datetime
 from src.Data.maper import EQUIPOS_ODDS
 
@@ -291,7 +286,7 @@ def generate_database(seasons: list[int], seasonType: str):
         # Get all the avaliable games for the season
         scheduleFrame = getSeasonScheduleFrame(season, seasonType, teamLookup)
 
-        if scheduleFrame:
+        if scheduleFrame is not None and not scheduleFrame.empty:
             # Get the games already in the database
             cursor.execute("SELECT GAME_ID FROM GAMES")
             existing_game_ids = set(row[0] for row in cursor.fetchall())
@@ -400,6 +395,8 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
                         fecha = datetime.now().strftime("%d %b %Y")
                     elif 'Yesterday' in fecha:
                         fecha = (datetime.now() - timedelta(days=1)).strftime("%d %b %Y")
+                    elif 'Tomorrow' in fecha or 'tomorrow' in fecha:
+                        fecha = (datetime.now() + timedelta(days=1)).strftime("%d %b %Y")
                 divs2 = div.find_all('a', class_='next-m:flex next-m:!mt-0 ml-2 mt-2 min-h-[32px] w-full hover:cursor-pointer')
 
                 for div2 in divs2:
@@ -520,49 +517,56 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
                 
                 try:
                     z += 1
-                    url = row['URL'] + extension
+                    if z == 3:
+                        medias = [[], [], []]
+                        maximos = [[], [], []]
+                        for j in range(len(medias)):
+                            diccionario_estadisticas[columnas[z][j]] = medias[j]
+                            diccionario_estadisticas[columnas[z][j+len(medias)]] = maximos[j]
+                    else:
+                        url = row['URL'] + extension
 
-                    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()),options=options)
+                        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()),options=options)
 
-                    driver.get(url)
-                    driver.maximize_window()
-                    time.sleep(3)
-                    svg_button = WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.ID, "onetrust-reject-all-handler"))
-                        #EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
-                    )
-                    svg_button.click()
-                    last_height = driver.execute_script("return document.body.scrollHeight")
-                    while True:
-                        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                        time.sleep(3)  # Espera un poco para que se cargue el contenido dinámico
-                        new_height = driver.execute_script("return document.body.scrollHeight")
-                        if new_height == last_height:
-                            break
-                        last_height = new_height
-                        
-                    html = driver.page_source
+                        driver.get(url)
+                        driver.maximize_window()
+                        time.sleep(3)
+                        svg_button = WebDriverWait(driver, 10).until(
+                            EC.element_to_be_clickable((By.ID, "onetrust-reject-all-handler"))
+                            #EC.element_to_be_clickable((By.CSS_SELECTOR, "div.overlay-bookie-modal svg.cursor-pointer"))
+                        )
+                        svg_button.click()
+                        last_height = driver.execute_script("return document.body.scrollHeight")
+                        while True:
+                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                            time.sleep(3)  # Espera un poco para que se cargue el contenido dinámico
+                            new_height = driver.execute_script("return document.body.scrollHeight")
+                            if new_height == last_height:
+                                break
+                            last_height = new_height
+                            
+                        html = driver.page_source
 
-                    soup = BeautifulSoup(html, 'html.parser')
+                        soup = BeautifulSoup(html, 'html.parser')
 
-                    divs = soup.find_all('div', class_='flex h-9 border-b border-l border-r border-black-borders text-xs')
+                        divs = soup.find_all('div', class_='flex h-9 border-b border-l border-r border-black-borders text-xs')
 
-                    ps = divs[0].find_all('p', class_='odds-text') if len(divs) > 0 else []
-                    calculator_list = [[] for _ in range(len(ps))]
-                    for div in divs:
-                        ps = div.find_all('p', class_='odds-text')
-                        for i in range(len(ps)):
-                            calculator_list[i].append(float(ps[i].text))
-                    from statistics import mean
-                    medias = [mean(lista) for lista in calculator_list]
-                    maximos = [max(lista) for lista in calculator_list]
-                    print(f"medias: {medias}")
-                    print(f"maximos: {maximos}")
+                        ps = divs[0].find_all('p', class_='odds-text') if len(divs) > 0 else []
+                        calculator_list = [[] for _ in range(len(ps))]
+                        for div in divs:
+                            ps = div.find_all('p', class_='odds-text')
+                            for i in range(len(ps)):
+                                calculator_list[i].append(float(ps[i].text))
+                        from statistics import mean
+                        medias = [mean(lista) for lista in calculator_list]
+                        maximos = [max(lista) for lista in calculator_list]
+                        print(f"medias: {medias}")
+                        print(f"maximos: {maximos}")
 
-                    # Aplicar la transformación según la condición
-                    for j in range(len(medias)):
-                        diccionario_estadisticas[columnas[z][j]] = medias[j]
-                        diccionario_estadisticas[columnas[z][j+len(medias)]] = maximos[j]
+                        # Aplicar la transformación según la condición
+                        for j in range(len(medias)):
+                            diccionario_estadisticas[columnas[z][j]] = medias[j]
+                            diccionario_estadisticas[columnas[z][j+len(medias)]] = maximos[j]
                 except Exception as e:
                     # Si ocurre un error, se captura la excepción y se imprime la variable
                     print(f"Ocurrió un error: {e} en el partido {index}")
@@ -595,7 +599,7 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
         conexion.close()
         return dataset_ods[['GAME_ID', 'Average_1', 'Average_X', 'Average_2', 'Highest_1', 'Highest_X', 'Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X', 'Average_12', 'Average_X2', 'Highest_1X', 'Highest_12', 'Highest_X2']]
     
-    conexion = sqlite3.connect("NBA_DATA.db") 
+    conexion = sqlite3.connect("NBA_DATA.db")
 
     cursor = conexion.cursor()
     cursor.execute("""
@@ -634,14 +638,14 @@ def generate_ods_table(url: str, pages: int, dataset_ods: pd.DataFrame = None):
 def database_inicialization():
 
     seasons = [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
-    # seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
-    # for type in seasonType:
-    #     if type == 'All Star':
-    #         continue
-    #     generate_database(seasons, type)
+    seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
+    for type in seasonType:
+        if type == 'All Star':
+            continue
+        generate_database(seasons, type)
 
     print("Generando tabla de odds")
-    urls = [#'https://www.oddsportal.com/basketball/usa/nba-2024-2025/results/',
+    urls = ['https://www.oddsportal.com/basketball/usa/nba-2024-2025/results/',
             'https://www.oddsportal.com/basketball/usa/nba-2023-2024/results/',
             'https://www.oddsportal.com/basketball/usa/nba-2022-2023/results/',
             'https://www.oddsportal.com/basketball/usa/nba-2021-2022/results/',
@@ -667,16 +671,16 @@ def database_inicialization():
 def database_actualization():
     global SEASON 
     SEASON = 2025
-    # seasons = [SEASON]
-    # seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
-    # for type in seasonType:
-    #     if type == 'All Star':
-    #         continue
-    #     generate_database(seasons, type)
+    seasons = [SEASON]
+    seasonType = ['Regular Season', 'Pre Season', 'Playoffs', 'All Star']
+    for type in seasonType:
+        if type == 'All Star':
+            continue
+        generate_database(seasons, type)
 
     print("Generando tabla de odds")
     urls = ['https://www.oddsportal.com/basketball/usa/nba/results/']
-    pages = [4]
+    pages = [1]
 
     columnas = ['URL', 'H_TEAM_NICKNAME', 'A_TEAM_NICKNAME', 'id', 'GAME_DATE', 'Averge_1','Average_X','Average_2','Highest_1','Highest_X','Highest_2', 'Average_H', 'Average_A', 'Highest_H', 'Highest_A', 'Average_1X','Average_12','Average_X2','Highest_1X','Highest_12','Highest_X2']
     dataset_ods = pd.DataFrame(columns=columnas)
